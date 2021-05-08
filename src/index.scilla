@@ -11,7 +11,8 @@ library ICOContract
     addfunds_tag
 } from "./lib/ICOContract.scillib"
 
-let uint128_le = @list_lt Uint128
+let uint128_le = uint128_le
+let bool_true = True
 
 contract ICOContract(
     init_admin: ByStr20,
@@ -80,7 +81,8 @@ procedure TransferToken(tag: String, amt: Uint128, recipient: ByStr20)
     send msgs
 end
 procedure FundingGoalReached()
-    reached = uint128_le funding_goal _balance;
+    bal <- _balance;
+    reached = uint128_le funding_goal bal;
     match reached with
     | True  =>
     | False =>
@@ -89,7 +91,8 @@ procedure FundingGoalReached()
     end
 end
 procedure FundingGoalNotReached()
-    reached = uint128_le _balance funding_goal;
+    bal <- _balance;
+    reached = uint128_le bal funding_goal;
     match reached with
     | True  =>
     | False =>
@@ -180,6 +183,5 @@ transition BuyToken()
     token_amt = builtin mul _amount token_qa_per_zil_qa;
     TransferToken transfer_tag token_amt _sender;
     (* register the investor to be able to refund in case of a funding goal failure *)
-    is_registered = Bool True;
-    registered_investors[_sender] := is_registered
+    registered_investors[_sender] := bool_true
 end
