@@ -3,6 +3,11 @@ type Error =
 | StagingAdminNotExist
 | StagingAdminValidationFailed
 | WrongTokenImplementationAddress
+| ICOHasEnded
+| ICODidNotEndYet
+| FundingGoalNotReached
+| FundingGoalReached
+| ThisIsNotTokenRecipient
 
 let make_error =
 fun (result: Error) =>
@@ -12,6 +17,11 @@ match result with
 | StagingAdminNotExist => Int32 -2
 | StagingAdminValidationFailed => Int32 -3
 | WrongTokenImplementationAddress => Int32 -4
+| ICOHasEnded => Int32 -5
+| ICODidNotEndYet => Int32 -6
+| FundingGoalNotReached => Int32 -7
+| FundingGoalReached => Int32 -8
+| ThisIsNotTokenRecipient => Int32 -9
 end
 in
 { _exception: "Error"; code: result_code }

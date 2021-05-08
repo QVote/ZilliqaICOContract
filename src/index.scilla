@@ -1,57 +1,30 @@
 scilla_version 0
 import ListUtils IntUtils PairUtils
-library TokenPayment
+library ICOContract
 
 @import {
     Error,
     make_error,
     zero,
-    transfer_tag,
     one_msg,
+    transfer_tag,
     addfunds_tag
-} from "./lib/TokenPayment.scillib"
+} from "./lib/ICOContract.scillib"
 
-let nil_message = Nil {Message}
-let zil_bystr20_uint128 = @list_zip ByStr20 Uint128
-let foldl_bystr20_uint128_pair = @list_foldl (Pair ByStr20 Uint128) (List Message)
-let from_pair_bystr20 = @fst ByStr20 Uint128
-let from_pair_uint128 = @snd ByStr20 Uint128
+let uint128_le = @list_lt Uint128
 
-let create_transfer_messages: ByStr20 -> List ByStr20 -> List Uint128 -> List Message = 
-    fun(current_impl: ByStr20) =>
-	fun(addresses: List ByStr20) => 
-	fun(amounts: List Uint128) =>
-    let zipped = zil_bystr20_uint128 addresses amounts in
-    let insert = 
-      fun(tail: List Message) => 
-      fun(address_amount_pair: Pair ByStr20 Uint128) => 
-        let address = from_pair_bystr20 address_amount_pair in 
-        let amt = from_pair_uint128 address_amount_pair in 
-        let head = {_tag: transfer_tag; _recipient: current_impl; _amount: zero; to: address; amount: amt} in
-        Cons {Message} head tail
-		in foldl_bystr20_uint128_pair insert nil_message zipped
-
-let create_pay_zil_messages: List ByStr20 -> List Uint128 -> List Message = 
-    fun(addresses: List ByStr20) => 
-    fun(amounts: List Uint128) =>
-    let zipped = zil_bystr20_uint128 addresses amounts in
-    let insert = 
-        fun(tail: List Message) => 
-        fun(address_amount_pair: Pair ByStr20 Uint128) => 
-        let address = from_pair_bystr20 address_amount_pair in 
-        let amt = from_pair_uint128 address_amount_pair in 
-        let head = {_tag: addfunds_tag; _recipient: address; _amount: amt} in
-        Cons {Message} head tail
-        in foldl_bystr20_uint128_pair insert nil_message zipped
-
-contract TokenPayment(
+contract ICOContract(
     init_admin: ByStr20,
-    current_impl: ByStr20
+    token_impl: ByStr20,
+    token_qa_per_zil_qa: Uint128,
+    ico_deadline: BNum,
+    funding_goal: Uint128
 )
 (* Current contract admin *)
 field contractadmin: ByStr20  = init_admin
 (* Admin that can be claimed by existing address *)
 field stagingcontractadmin: Option ByStr20 = None {ByStr20}
+field registered_investors: Map ByStr20 Bool = Emp ByStr20 Bool
 
 procedure ThrowError(err: Error)
     e = make_error err;
@@ -64,6 +37,72 @@ procedure IsAdmin(initiator: ByStr20)
     | True  =>
     | False =>
         e = AdminValidationFailed;
+        ThrowError e
+    end
+end
+procedure IsCorrectImplementation(from: ByStr20)
+    is_right_implementation = builtin eq from token_impl;
+    match is_right_implementation with
+    | True  =>
+    | False =>
+        e = WrongTokenImplementationAddress;
+        ThrowError e
+    end
+end
+procedure NotAfterDeadline()
+    blk <- & BLOCKNUMBER;
+    in_progress = builtin blt blk ico_deadline;
+    match in_progress with
+    | True  =>
+    | False =>
+        e = ICOHasEnded;
+        ThrowError e
+    end
+end
+procedure IsAfterDeadline()
+    blk <- & BLOCKNUMBER;
+    did_end = builtin blt ico_deadline blk;
+    match did_end with
+    | True  =>
+    | False =>
+        e = ICODidNotEndYet;
+        ThrowError e
+    end
+end
+procedure TransferFunds(tag: String, amt: Uint128, recipient: ByStr20)
+    msg = {_tag: tag; _recipient: recipient; _amount: amt};
+    msgs = one_msg msg;
+    send msgs
+end
+procedure TransferToken(tag: String, amt: Uint128, recipient: ByStr20)
+    msg = {_tag: tag; _recipient: token_impl; _amount: zero; to: recipient; amount: amt};
+    msgs = one_msg msg;
+    send msgs
+end
+procedure FundingGoalReached()
+    reached = uint128_le funding_goal _balance;
+    match reached with
+    | True  =>
+    | False =>
+        e = FundingGoalNotReached;
+        ThrowError e
+    end
+end
+procedure FundingGoalNotReached()
+    reached = uint128_le _balance funding_goal;
+    match reached with
+    | True  =>
+    | False =>
+        e = FundingGoalReached;
+        ThrowError e
+    end
+end
+procedure ThisIsRecipient(recipient: ByStr20)
+    is_recipient = builtin eq recipient _this_address;
+    match is_recipient with
+    | True  =>
+    | False =>
+        e = ThisIsNotTokenRecipient;
         ThrowError e
     end
 end
@@ -95,50 +134,52 @@ transition ClaimAdmin()
         ThrowError e
     end
 end
-(* get back remaining zrc2 tokens and all zils *)
+(* withdraw zils *)
+(* only after ico ended *)
+(* only if funding goal reached *)
+(* only if is admin  *)
 transition DrainContractBalance(amt: Uint128)
+    IsAfterDeadline;
+    FundingGoalReached;
     IsAdmin _sender;
     bal <- _balance;
-    msg = {_tag: transfer_tag; _recipient: current_impl; _amount: zero; to: _sender; amount: amt};
-    one_m = one_msg msg;
-    zil_back = {_tag: addfunds_tag; _recipient: _sender; _amount: bal};
-    msgs = Cons {Message} zil_back one_m;
-    send msgs;
+    TransferFunds addfunds_tag bal _sender;
     e = { _eventname: "DrainContractBalance"; to: _sender; amount: amt};
     event e
 end
-(* dummy to be able to send the tokens back to admin *)
+(* to be able to send the tokens back to admin *)
 transition TransferSuccessCallBack(sender: ByStr20, recipient: ByStr20, amount: Uint128)
 end
-(* accepts tokens from implementation *)
+(* to accept tokens *)
+(* ALSO USED TO REFUND *)
+(* @dev if sender has no entry in the registered_investors it means it is admin *)
 transition RecipientAcceptTransfer(sender: ByStr20, recipient: ByStr20, amount: Uint128)
-    is_right_implementation = builtin eq _sender current_impl;
-    match is_right_implementation with
-    | True  =>
-    | False =>
-        e = WrongTokenImplementationAddress;
-        ThrowError e
-    end
+    IsCorrectImplementation _sender;
+    ThisIsRecipient recipient;
+  	is_registered <- registered_investors[sender];
+  	match is_registered with
+  	 | Some reg =>
+       (* this is a refund scenario *)
+       (* only if is after deadline *)
+       (* only if funding goal was not reached *)
+       IsAfterDeadline;
+       FundingGoalNotReached;
+       to_refund = builtin div amount token_qa_per_zil_qa;
+       TransferFunds addfunds_tag to_refund sender
+  	 | None =>
+       (* just accept the contract is being funded *)
+  	end
 end
-(* add any amount of funds to the contract *)
-transition AddFunds()
+
+(* buy tokens at a fixed rate *)
+(* can buy before the end of the ico *)
+(* @dev register investor in the map*)
+transition BuyToken()
+    NotAfterDeadline;
     accept;
-    e = { _eventname : "Funds deposit "; funder : _sender };
-    event e
+    token_amt = builtin mul _amount token_qa_per_zil_qa;
+    TransferToken transfer_tag token_amt _sender;
+    (* register the investor to be able to refund in case of a funding goal failure *)
+    is_registered = Bool True;
+    registered_investors[_sender] := is_registered
 end
-(* send payments to zrc2 compatible *)
-transition Pay(addresses: List ByStr20, amts: List Uint128)
-    IsAdmin _sender;
-    msgs = create_transfer_messages current_impl addresses amts;
-    send msgs;
-    e = { _eventname: "Pay"; addresses: addresses; amts: amts};
-    event e
-end
-(* sends zils *)
-transition PayZil(addresses: List ByStr20, amts: List Uint128)
-    IsAdmin _sender;
-    msgs = create_pay_zil_messages addresses amts;
-    send msgs;
-    e = { _eventname: "PayZil"; addresses: addresses; amts: amts};
-    event e
-end 
