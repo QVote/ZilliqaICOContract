@@ -17,7 +17,7 @@ let bool_true = True
 contract ICOContract(
     init_admin: ByStr20,
     token_impl: ByStr20,
-    token_qa_per_zil_qa: Uint128,
+    token_qa_per_zil_qa: Uint128, (* 5 qa (Zil)*token_qa_per_zil_qa = token_qa given to user*)
     ico_deadline: BNum,
     funding_goal: Uint128
 )
@@ -156,6 +156,7 @@ end
 (* to accept tokens *)
 (* ALSO USED TO REFUND *)
 (* @dev if sender has no entry in the registered_investors it means it is admin *)
+(* The contract can be funcded initally here with tokens for the ICO*)
 transition RecipientAcceptTransfer(sender: ByStr20, recipient: ByStr20, amount: Uint128)
     IsCorrectImplementation _sender;
     ThisIsRecipient recipient;
@@ -176,12 +177,18 @@ end
 
 (* buy tokens at a fixed rate *)
 (* can buy before the end of the ico *)
-(* @dev register investor in the map*)
+(* @dev register investor in the map *)
 transition BuyToken()
     NotAfterDeadline;
     accept;
     token_amt = builtin mul _amount token_qa_per_zil_qa;
     TransferToken transfer_tag token_amt _sender;
     (* register the investor to be able to refund in case of a funding goal failure *)
+    (* Should we register how much the investors bought and allow them to
+        Refund only the amount the bought? 
+
+        In any case:
+        Total supply of token in ico == Total supply of zils in this contract
+    *)
     registered_investors[_sender] := bool_true
 end
